@@ -44,3 +44,8 @@ ref: branch name or commit id, e.g. "master"
 username: username if repository is private (Optional)
 password: password or access token for the private repository (Optional)
 ```
+3. Run `bedrock_dag` from airflow UI or individual tasks from the command line, for e.g.
+```bash
+$> airflow test bedrock_dag create 2019-05-21
+```
+4. [Optional] Login to https://bedrock.basis-ai.com to verify that the training pipeline has been created
