@@ -33,3 +33,14 @@ Login: username provisioned by basis, e.g. "user@bdrk.ai"
 Password: password provisioned by basis, e.g. "password"
 Extra: must be left empty
 ```
+
+## Run a DAG
+
+1. Copy `examples/bedrock_dag.py` to `airflow/dags/` (here `airflow` is your Airflow folder)
+2. Update GitHub credentials passed to `CreatePipelineOperator` to match your own repository, including
+```
+uri: link to repository on GitHub, e.g. "https://github.com/org/example.git"
+ref: branch name or commit id, e.g. "master"
+username: username if repository is private (Optional)
+password: password or access token for the private repository (Optional)
+```
