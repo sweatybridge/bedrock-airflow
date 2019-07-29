@@ -1,19 +1,30 @@
 from datetime import datetime
+from os import getenv
 
 from airflow import DAG
+from airflow.models import Variable
 from airflow.operators.bedrock_plugin import CreatePipelineOperator, RunPipelineOperator
 
-dag = DAG("bedrock_dag", start_date=datetime.now())
+dag = DAG("bedrock_dag", start_date=datetime(2019, 7, 24), catchup=False)
+
+create_options = Variable.get(
+    "bedrock_create_training_pipeline_config",
+    deserialize_json=True,
+    default_var={
+        "uri": getenv("GIT_REPO_URI", "bedrock"),
+        "ref": getenv("GIT_REPO_REF", "master"),
+        "username": getenv("GIT_REPO_USERNAME", "bedrock"),
+        "password": getenv("GIT_REPO_PASSWORD", "blahblah"),
+        "config_file_path": getenv("GIT_REPO_CONFIG_FILE_PATH", "bedrock.hcl"),
+    },
+)
 
 create = CreatePipelineOperator(
     task_id="create_pipeline",
     dag=dag,
     conn_id="bedrock",
-    name="Airflow-created pipeline",
-    uri="https://github.com/org/example.git",
-    ref="master",
-    username="bedrock",
-    password="blahblah",
+    name="My Bedrock Airflow DAG",
+    **create_options,
 )
 
 run = RunPipelineOperator(

@@ -30,7 +30,10 @@ class BedrockHook(HttpHook):
 
         session = requests.Session()
         session.headers.update(
-            {"Authorization": f"Bearer {self.bedrock_token}", "Content-Type": "application/json"}
+            {
+                "Authorization": f"Bearer {self.bedrock_token}",
+                "Content-Type": "application/json",
+            }
         )
         return session
 
@@ -48,14 +51,18 @@ class BedrockHook(HttpHook):
         else:
             # TODO: Remove basic auth support once we fully support oauth
             conn = HTTPSConnection(self.conn.host)
-            auth_token = b64encode(f"{self.conn.login}:{self.conn.password}".encode()).decode(
-                "ascii"
-            )
+            auth_token = b64encode(
+                f"{self.conn.login}:{self.conn.password}".encode()
+            ).decode("ascii")
             headers = {"Authorization": f"Basic {auth_token}"}
             conn.request("GET", "/v1/auth/login", headers=headers)
 
         resp = conn.getresponse()
         data = json.loads(resp.read())
+
+        if not data["access_token"]:
+            raise Exception(data)
+
         self.bedrock_token = data["access_token"]
         self.bedrock_token_expiry = datetime.datetime.now() + datetime.timedelta(
             seconds=int(data["expires_in"])
@@ -65,12 +72,23 @@ class BedrockHook(HttpHook):
 class CreatePipelineOperator(BaseOperator):
     CREATE_PIPELINE_PATH = f"{API_VERSION}/pipeline/"
 
-    def __init__(self, conn_id, name, uri, ref, username, password, **kwargs):
+    def __init__(
+        self,
+        conn_id,
+        name,
+        uri,
+        ref,
+        username,
+        password,
+        config_file_path="bedrock.hcl",
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.conn_id = conn_id
         self.name = name
         self.uri = uri
         self.ref = ref
+        self.config_file_path = config_file_path
         self.username = username
         self.password = password
 
@@ -83,6 +101,7 @@ class CreatePipelineOperator(BaseOperator):
                 "ref": self.ref,
                 "username": self.username,
                 "password": self.password,
+                "config_file_path": self.config_file_path,
             }
         )
 
@@ -102,6 +121,7 @@ class RunPipelineOperator(BaseOperator):
     GET_ENVIRONMENT_PATH = f"{API_VERSION}/environment/"
     RUN_PIPELINE_PATH = f"{API_VERSION}/pipeline/{{}}/run/"
     GET_PIPELINE_RUN_PATH = f"{API_VERSION}/run/{{}}"
+    STOP_PIPELINE_RUN_PATH = f"{API_VERSION}/training_run/{{}}/status"
     WAIT_STATUS = ["Running", "Queued"]
     SUCCESS_STATUS = ["Succeeded"]
 
@@ -111,6 +131,7 @@ class RunPipelineOperator(BaseOperator):
         super().__init__(**kwargs)
         self.conn_id = conn_id
         self.pipeline_id = pipeline_id
+        self.pipeline_run_id = None
         self.status_poke_interval = status_poke_interval
 
     def execute(self, context):
@@ -131,7 +152,8 @@ class RunPipelineOperator(BaseOperator):
 
         try:
             res = hook.run(
-                RunPipelineOperator.RUN_PIPELINE_PATH.format(self.pipeline_id), data=data
+                RunPipelineOperator.RUN_PIPELINE_PATH.format(self.pipeline_id),
+                data=data,
             )
         except AirflowException as ex:
             self.log.error("Failed to run pipeline")
@@ -139,6 +161,7 @@ class RunPipelineOperator(BaseOperator):
 
         data = json.loads(res.content)
         pipeline_run_id = data["entity_id"]
+        self.pipeline_run_id = pipeline_run_id  # Used for cleanup only
         self.log.info(f"Pipeline successfully run, pipeline run ID: {pipeline_run_id}")
 
         # Poll pipeline run status
@@ -149,15 +172,19 @@ class RunPipelineOperator(BaseOperator):
             elif status in RunPipelineOperator.SUCCESS_STATUS:
                 break
             else:
+                self._cleanup_run(pipeline_run_id)
                 raise Exception(f"Run status is {status}")
 
     def _check_status(self, hook, pipeline_run_id):
         self.log.info(f"Checking status")
 
         try:
-            res = hook.run(RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(pipeline_run_id))
+            res = hook.run(
+                RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(pipeline_run_id)
+            )
         except AirflowException as ex:
             self.log.error("Failed to check pipeline run status")
+            self._cleanup_run(pipeline_run_id)
             raise ex
 
         data = json.loads(res.content)
@@ -165,6 +192,19 @@ class RunPipelineOperator(BaseOperator):
         status = data["status"]
         self.log.info(f"Status of pipeline run: {status}")
         return status
+
+    def _cleanup_run(self, pipeline_run_id):
+        self.log.info(f"Stopping pipeline run")
+        try:
+            hook = BedrockHook(method="POST", bedrock_conn_id=self.conn_id)
+            hook.run(RunPipelineOperator.STOP_PIPELINE_RUN_PATH.format(pipeline_run_id))
+        except AirflowException as ex:
+            self.log.info(f"Failed to stop pipeline run status: {ex}")
+            # Don't raise if we failed to stop
+
+    def on_kill(self):
+        if self.pipeline_run_id:
+            self._cleanup_run(self.pipeline_run_id)
 
 
 class BedrockPlugin(AirflowPlugin):
