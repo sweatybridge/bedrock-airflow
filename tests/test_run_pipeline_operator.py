@@ -1,11 +1,14 @@
 import datetime
+import sys
 import time
-from unittest.mock import PropertyMock, patch
-
 import pytest
 from airflow import DAG
-
 from bedrock_plugin import BedrockHook, RunPipelineOperator
+
+if sys.version_info >= (3, 3):
+    from unittest.mock import PropertyMock, patch
+else:
+    from mock import PropertyMock, patch
 
 
 def test_run_pipeline(airflow_connection):
@@ -24,11 +27,13 @@ def test_run_pipeline(airflow_connection):
     def bedrockhook_run_side_effect(endpoint, *_args, **_kwargs):
         resp = PropertyMock()
         if endpoint == RunPipelineOperator.RUN_PIPELINE_PATH.format(pipeline_id):
-            resp.content = f'{{"entity_id": "{run_id}"}}'
+            resp.content = '{{"entity_id": "{}"}}'.format(run_id)
         elif endpoint == RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(run_id):
-            resp.content = f'{{"status": "{RunPipelineOperator.SUCCESS_STATUS[0]}"}}'
+            resp.content = '{{"status": "{}"}}'.format(
+                RunPipelineOperator.SUCCESS_STATUS[0]
+            )
         elif endpoint == RunPipelineOperator.GET_ENVIRONMENT_PATH:
-            resp.content = f'[{{"public_id": "{environment_id}"}}]'
+            resp.content = '[{{"public_id": "{}"}}]'.format(environment_id)
         else:
             pytest.fail("Called with bad args")
         return resp
@@ -40,11 +45,15 @@ def test_run_pipeline(airflow_connection):
 
     assert mock_resp.call_count >= 3
 
-    get_env_call, run_pipeline_call, check_status_call, *others = mock_resp.mock_calls
+    get_env_call = mock_resp.mock_calls[0]
     assert get_env_call[1][0] == RunPipelineOperator.GET_ENVIRONMENT_PATH
+
+    run_pipeline_call = mock_resp.mock_calls[1]
     assert run_pipeline_call[1][0] == RunPipelineOperator.RUN_PIPELINE_PATH.format(
         pipeline_id
     )
+
+    check_status_call = mock_resp.mock_calls[2]
     assert check_status_call[1][0] == RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(
         run_id
     )
@@ -63,24 +72,24 @@ def test_run_pipeline_waiting(airflow_connection):
         pipeline_id=pipeline_id,
     )
 
-    has_waited = False
+    _outer = {"has_waited": False}
 
     def bedrockhook_run_side_effect(endpoint, *_args, **_kwargs):
         resp = PropertyMock()
         if endpoint == RunPipelineOperator.RUN_PIPELINE_PATH.format(pipeline_id):
-            resp.content = f'{{"entity_id": "{run_id}"}}'
+            resp.content = '{{"entity_id": "{}"}}'.format(run_id)
         elif endpoint == RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(run_id):
-            nonlocal has_waited
-
-            if not has_waited:
-                resp.content = f'{{"status": "{RunPipelineOperator.WAIT_STATUS[0]}"}}'
-                has_waited = True
+            if not _outer["has_waited"]:
+                resp.content = '{{"status": "{}"}}'.format(
+                    RunPipelineOperator.WAIT_STATUS[0]
+                )
+                _outer["has_waited"] = True
             else:
-                resp.content = (
-                    f'{{"status": "{RunPipelineOperator.SUCCESS_STATUS[0]}"}}'
+                resp.content = '{{"status": "{}"}}'.format(
+                    RunPipelineOperator.SUCCESS_STATUS[0]
                 )
         elif endpoint == RunPipelineOperator.GET_ENVIRONMENT_PATH:
-            resp.content = f'[{{"public_id": "{environment_id}"}}]'
+            resp.content = '[{{"public_id": "{}"}}]'.format(environment_id)
         else:
             pytest.fail("Called with bad args")
         return resp
@@ -92,11 +101,15 @@ def test_run_pipeline_waiting(airflow_connection):
 
     assert mock_resp.call_count >= 3
 
-    get_env_call, run_pipeline_call, check_status_call, *others = mock_resp.mock_calls
+    get_env_call = mock_resp.mock_calls[0]
     assert get_env_call[1][0] == RunPipelineOperator.GET_ENVIRONMENT_PATH
+
+    run_pipeline_call = mock_resp.mock_calls[1]
     assert run_pipeline_call[1][0] == RunPipelineOperator.RUN_PIPELINE_PATH.format(
         pipeline_id
     )
+
+    check_status_call = mock_resp.mock_calls[2]
     assert check_status_call[1][0] == RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(
         run_id
     )
@@ -119,15 +132,15 @@ def test_run_pipeline_failure(airflow_connection):
     def bedrockhook_run_side_effect(endpoint, *_args, **_kwargs):
         resp = PropertyMock()
         if endpoint == RunPipelineOperator.RUN_PIPELINE_PATH.format(pipeline_id):
-            resp.content = f'{{"entity_id": "{run_id}"}}'
+            resp.content = '{{"entity_id": "{}"}}'.format(run_id)
         elif endpoint == RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(run_id):
-            resp.content = f'{{"status": "{fail_status}"}}'
+            resp.content = '{{"status": "{}"}}'.format(fail_status)
         elif endpoint == RunPipelineOperator.GET_ENVIRONMENT_PATH:
-            resp.content = f'[{{"public_id": "{environment_id}"}}]'
+            resp.content = '[{{"public_id": "{}"}}]'.format(environment_id)
         elif endpoint == RunPipelineOperator.STOP_PIPELINE_RUN_PATH.format(run_id):
-            resp.content = f"OK"
+            resp.content = "OK"
         else:
-            pytest.fail(f"Called with bad args: {endpoint}")
+            pytest.fail("Called with bad args: {}".format(endpoint))
         return resp
 
     with patch.object(
@@ -135,19 +148,23 @@ def test_run_pipeline_failure(airflow_connection):
     ) as mock_resp, pytest.raises(Exception) as ex:
         op.execute(None)
 
-    assert ex.value.args[0] == f"Run status is {fail_status}"
+    assert ex.value.args[0] == "Run status is {}".format(fail_status)
     assert mock_resp.call_count >= 4
 
-    get_env_call, run_pipeline_call, check_status_call, stop_run_call, *others = (
-        mock_resp.mock_calls
-    )
+    get_env_call = mock_resp.mock_calls[0]
     assert get_env_call[1][0] == RunPipelineOperator.GET_ENVIRONMENT_PATH
+
+    run_pipeline_call = mock_resp.mock_calls[1]
     assert run_pipeline_call[1][0] == RunPipelineOperator.RUN_PIPELINE_PATH.format(
         pipeline_id
     )
+
+    check_status_call = mock_resp.mock_calls[2]
     assert check_status_call[1][0] == RunPipelineOperator.GET_PIPELINE_RUN_PATH.format(
         run_id
     )
+
+    stop_run_call = mock_resp.mock_calls[3]
     assert stop_run_call[1][0] == RunPipelineOperator.STOP_PIPELINE_RUN_PATH.format(
         run_id
     )

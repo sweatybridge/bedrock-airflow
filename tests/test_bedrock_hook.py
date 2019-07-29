@@ -1,8 +1,12 @@
 import datetime
+import sys
 from http.client import HTTPResponse
-from unittest.mock import Mock, patch
-
 from bedrock_plugin import BedrockHook
+
+if sys.version_info >= (3, 3):
+    from unittest.mock import Mock, patch
+else:
+    from mock import Mock, patch
 
 
 def test_init(airflow_connection):
@@ -17,8 +21,8 @@ def test_authenticate(airflow_connection):
     access_token = "some_access_token"
     expires_in = 60
     now = datetime.datetime(2001, 1, 1, 0, 0, 0)
-    authenticate_return_value = (
-        f'{{"access_token":"{access_token}","expires_in":"{expires_in}"}}'
+    authenticate_return_value = '{{"access_token":"{}","expires_in":"{}"}}'.format(
+        access_token, expires_in
     )
 
     h = BedrockHook(method="POST", bedrock_conn_id=airflow_connection)
@@ -44,8 +48,8 @@ def test_get_conn_headers(airflow_connection):
 
     headers = h.get_conn(None).headers
 
-    assert headers["Authorization"] == f"Bearer {bedrock_token}"
-    assert headers["Content-Type"] == f"application/json"
+    assert headers["Authorization"] == "Bearer {}".format(bedrock_token)
+    assert headers["Content-Type"] == "application/json"
 
 
 def test_get_conn_calls_authenticate_with_no_token(airflow_connection):
@@ -56,7 +60,7 @@ def test_get_conn_calls_authenticate_with_no_token(airflow_connection):
     h._authenticate = auth_mock
 
     h.get_conn(None)
-    auth_mock.assert_called_once()
+    auth_mock.assert_called_once_with()
 
 
 def test_get_conn_calls_authenticate_with_expired_token(airflow_connection):
@@ -67,4 +71,4 @@ def test_get_conn_calls_authenticate_with_expired_token(airflow_connection):
     h._authenticate = auth_mock
 
     h.get_conn(None)
-    auth_mock.assert_called_once()
+    auth_mock.assert_called_once_with()
