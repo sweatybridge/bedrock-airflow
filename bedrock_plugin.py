@@ -133,6 +133,7 @@ class RunPipelineOperator(BaseOperator):
         self.conn_id = conn_id
         self.pipeline_id = pipeline_id
         self.pipeline_run_id = None
+        self.run_source_commit = kwargs.get("run_source_commit")
         self.status_poke_interval = status_poke_interval
 
     def execute(self, context):
@@ -149,7 +150,10 @@ class RunPipelineOperator(BaseOperator):
 
         # Run the training pipeline
         hook = BedrockHook(method="POST", bedrock_conn_id=self.conn_id)
-        data = json.dumps({"environment_public_id": environment_id})
+        run_params = {"environment_public_id": environment_id}
+        if self.run_source_commit is not None:
+            run_params["run_source_commit"] = self.run_source_commit
+        data = json.dumps(run_params)
 
         try:
             res = hook.run(
